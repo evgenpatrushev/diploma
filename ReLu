@@ -1,0 +1,43 @@
+import numpy as np
+
+
+class ReLU:
+    # A standard fully-connected layer with ReLU activation.
+
+    def __init__(self, input_len, nodes):
+        # We divide by input_len to reduce the variance of our initial values
+        self.weights = np.random.randn(input_len, nodes) / input_len
+        self.biases = np.ones(nodes)
+        self.input_shape, self.input, self.totals, self.out = (), np.array([]), np.array([]), np.array([])
+
+    def forward(self, input_val):
+        '''
+        Performs a forward pass of the softmax layer using the given input.
+        Returns a 1d numpy array containing the respective probability values.
+        - input can be any array with any dimensions.
+        '''
+        self.input_shape = input_val.shape
+
+        input_val = input_val.flatten()
+        self.input = input_val
+
+        self.totals = np.dot(input_val, self.weights) + self.biases
+        self.out = np.array([total if total >= 0 else 0 for total in self.totals])
+
+        return self.out
+
+    def backprop(self, gradient, learn_rate):
+        '''
+        Performs a backward pass of the softmax layer.
+        Returns the loss gradient for this layer's inputs.
+        - d_L_d_out is the loss gradient for this layer's outputs.
+        - learn_rate is a float.
+        '''
+
+        d_E_d_out = np.sum(gradient * self.weights.T)
+        d_out_d_in = 1
+
+        self.weights = self.weights - learn_rate * np.dot(self.input.T, d_E_d_out * d_out_d_in)
+        self.biases = self.biases - learn_rate * d_E_d_out * d_out_d_in
+
+        return d_E_d_out * d_out_d_in
