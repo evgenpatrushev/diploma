@@ -71,43 +71,43 @@ def train(im, label, lr=.005):
 
     return loss, acc
 
+def run_old_cnn():
+    print('MNIST CNN initialized!')
 
-print('MNIST CNN initialized!')
+    # Train the CNN for 3 epochs
+    for epoch in range(3):
+        print('--- Epoch %d ---' % (epoch + 1))
 
-# Train the CNN for 3 epochs
-for epoch in range(3):
-    print('--- Epoch %d ---' % (epoch + 1))
+        # Shuffle the training data
+        permutation = np.random.permutation(len(train_images))
+        train_images = train_images[permutation]
+        train_labels = train_labels[permutation]
 
-    # Shuffle the training data
-    permutation = np.random.permutation(len(train_images))
-    train_images = train_images[permutation]
-    train_labels = train_labels[permutation]
+        # Train!
+        loss = 0
+        num_correct = 0
+        for i, (im, label) in enumerate(zip(train_images, train_labels)):
+            if i % 100 == 99:
+                print(
+                    '[Step %d] Past 100 steps: Average Loss %.3f | Accuracy: %d%%' %
+                    (i + 1, loss / 100, num_correct)
+                )
+                loss = 0
+                num_correct = 0
 
-    # Train!
+            l, acc = train(im, label)
+            loss += l
+            num_correct += acc
+
+    # Test the CNN
+    print('\n--- Testing the CNN ---')
     loss = 0
     num_correct = 0
-    for i, (im, label) in enumerate(zip(train_images, train_labels)):
-        if i % 100 == 99:
-            print(
-                '[Step %d] Past 100 steps: Average Loss %.3f | Accuracy: %d%%' %
-                (i + 1, loss / 100, num_correct)
-            )
-            loss = 0
-            num_correct = 0
-
-        l, acc = train(im, label)
+    for im, label in zip(test_images, test_labels):
+        _, l, acc = forward(im, label)
         loss += l
         num_correct += acc
 
-# Test the CNN
-print('\n--- Testing the CNN ---')
-loss = 0
-num_correct = 0
-for im, label in zip(test_images, test_labels):
-    _, l, acc = forward(im, label)
-    loss += l
-    num_correct += acc
-
-num_tests = len(test_images)
-print('Test Loss:', loss / num_tests)
-print('Test Accuracy:', num_correct / num_tests)
+    num_tests = len(test_images)
+    print('Test Loss:', loss / num_tests)
+    print('Test Accuracy:', num_correct / num_tests)
