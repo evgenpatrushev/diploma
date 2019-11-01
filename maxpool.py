@@ -14,7 +14,7 @@ class MaxPool:
         - image is a 2d numpy array
         '''
 
-        _, h, w = image.shape
+        h, w, _ = image.shape
 
         new_h = h // self.size_of_pool
         new_w = w // self.size_of_pool
@@ -73,6 +73,7 @@ class MaxPool:
 
 if __name__ == '__main__':
     from conv import Convolution
+
     obj = Convolution(num_filters=2, image=True)
     print(list(obj.iterate_regions(image=np.array([[0, 50, 0, 29],
                                                    [0, 80, 31, 2],

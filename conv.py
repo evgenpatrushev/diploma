@@ -65,10 +65,11 @@ class Convolution:
             for i in range(num_conv):
                 self._forward(input_val=input_val[:, :, i])
                 self.output += self.biases
-                if output:
+                if not i:  # first iteration i == 0
                     output = self.output
                 else:
                     output = np.concatenate((output, self.output), axis=2)
+            self.output = output
 
         self.input = input_val
 
