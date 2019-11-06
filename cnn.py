@@ -11,9 +11,29 @@ train_labels = mnist.train_labels()[:1000]
 test_images = mnist.test_images()[:1000]
 test_labels = mnist.test_labels()[:1000]
 
-conv = Convolution(8)  # 28x28x1 -> 26x26x8
-pool = MaxPool()  # 26x26x8 -> 13x13x8
-softmax = Softmax(13 * 13 * 8, 10)  # 13x13x8 -> 10
+l1_conv_start = Convolution(3, image=True)  # 28x28x1 -> 26x26x3
+l2_pool = MaxPool()  # 26x26x8 -> 13x13x8
+l3_conv = Convolution(5)  # 28x28x1 -> 26x26x3
+l4_conv = Convolution(5, shape=2)  # 28x28x1 -> 26x26x3
+l5_pool = MaxPool()  # 26x26x8 -> 13x13x8
+softmax = Softmax(5 * 5 * 75, 10)  # 13x13x8 -> 10
+lr = 0.005
+
+for img, label in zip(train_images, train_labels):
+    l1_conv_start.forward(img)
+    l2_pool.forward(l1_conv_start.output)
+    l3_conv.forward(l2_pool.output)
+    l4_conv.forward(l3_conv.output)
+    l5_pool.forward(l4_conv.output)
+    softmax.forward(l5_pool.output)
+
+    d_l_d_out = -1 * label / softmax.out + (1 - label) / (1 - softmax.out)
+    d_l_d_out = softmax.backprop(d_l_d_out, lr)
+    d_l_d_out = l5_pool.backprop(d_l_d_out)
+    d_l_d_out = l4_conv.back_propagation(d_l_d_out, lr)
+    d_l_d_out = l2_pool.backprop(d_l_d_out)
+    d_l_d_out = l3_conv.back_propagation(d_l_d_out, lr)
+    l1_conv_start.back_propagation(d_l_d_out, lr)
 
 
 class CNN():
@@ -70,6 +90,7 @@ def train(im, label, lr=.005):
     gradient = conv.backprop(gradient, lr)
 
     return loss, acc
+
 
 def run_old_cnn():
     print('MNIST CNN initialized!')
