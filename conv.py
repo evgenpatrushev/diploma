@@ -10,9 +10,12 @@ class Convolution:
         self.stride = stride
         self.padding = padding
         self.shape = shape
-        # We divide by 9 to reduce the variance of our initial values
-        self.filters = np.random.randn(num_filters, shape, shape) / 9
-        self.biases = np.ones(num_filters)
+
+        # self.filters = np.random.normal(loc=0, scale=0.2, size=(num_filters, shape, shape))
+        self.filters = np.random.normal(loc=0, scale=5, size=(num_filters, shape, shape)) / (
+                self.num_filters + self.shape + self.shape)
+
+        self.biases = np.zeros(num_filters)
         self.input, self.output = np.array([]), np.array([])
 
     def padding_f(self, matrix, padding):
@@ -29,8 +32,8 @@ class Convolution:
         h, w = image.shape
 
         regions = ((i, j, image[i:(i + self.shape), j:(j + self.shape)])
-                   for i in range(0, h - self.shape + 1 + 2 * self.padding, self.stride)
-                   for j in range(0, w - self.shape + 1 + 2 * self.padding, self.stride))
+                   for i in range(0, h - self.shape + 1, self.stride)
+                   for j in range(0, w - self.shape + 1, self.stride))
 
         for i, j, region in regions:
             yield i, j, region
@@ -40,31 +43,34 @@ class Convolution:
 
             if len(input_val.shape) == 2:
                 self._forward(input_val=input_val)
+                self.output = self.output + self.biases
 
             elif len(input_val.shape) == 3:
-                """
-                RGB images are splitting into three color layers and for each color are created filter and then 
-                sum into one output (image/conv) with bias.
-                
-                Combination of 3 filters are created num_filters times
-                
-                Algorithm: 
-                    1 - get 3 color RGB layers
-                    2 - random filters for each RGB layer created 'num_filters' filters with shape 'shape*shape'
-                    3 - by num_filters convoluted each RGB layer and then sum for each RGB into one 
-                    4 - get np array with shape (shape, shape, num_filters)   
-                """
-                num_filters, shape = self.filters.shape
-                filters = np.random.randn(3, num_filters, shape, shape) / 9
-                output = 0
+                    """
+                    RGB images are splitting into three color layers and for each color are created filter and then 
+                    sum into one output (image/conv) with bias.
+                    
+                    Combination of 3 filters are created num_filters times
+                    
+                    Algorithm: 
+                        1 - get 3 color RGB layers
+                        2 - random filters for each RGB layer created 'num_filters' filters with shape 'shape*shape'
+                        3 - by num_filters convoluted each RGB layer and then sum for each RGB into one 
+                        4 - get np array with shape (shape, shape, num_filters)   
+                    """
 
-                for img_color, filter_for_color in zip(input_val, filters):
-                    self.filters = filter_for_color
-                    self._forward(input_val=img_color)
-                    output += self.output
+                    filters = np.random.normal(loc=0, scale=5, size=(3, self.num_filters, self.shape, self.shape)) / (
+                            self.num_filters + self.shape + self.shape)
+                    # filters = np.random.normal(loc=0, scale=0.2, size=(3, self.num_filters, self.shape, self.shape))
+                    output = 0
 
-                self.filters = filters
-                self.output = output + self.biases
+                    for img_color, filter_for_color in zip(input_val, filters):
+                        self.filters = filter_for_color
+                        self._forward(input_val=img_color)
+                        output += self.output
+
+                    self.filters = filters
+                    self.output = output + self.biases
 
         else:
             num_conv = input_val.shape[2]
@@ -92,8 +98,8 @@ class Convolution:
 
         h, w = input_val.shape
         self.output = np.zeros(
-            ((h - self.shape + 2 * self.padding) // self.stride + 1,
-             (w - self.shape + 2 * self.padding) // self.stride + 1, self.num_filters))
+            ((h - self.shape) // self.stride + 1,
+             (w - self.shape) // self.stride + 1, self.num_filters))
 
         for i, j, im_region in self.iterate_regions(input_val):
             self.output[i, j] = np.sum(im_region * self.filters, axis=(1, 2))
@@ -123,7 +129,7 @@ class Convolution:
             """
             # TODO -sure about backprop at multiple conv obj with same filters (formula) ... look good but not sure
             num_conv = self.input.shape[2]
-            return_val = np.zeros(self.input)
+            return_val = np.zeros(self.input.shape)
 
             for i in range(num_conv):
                 # save variant of backprop, but i thnk coeff not correct
@@ -133,6 +139,7 @@ class Convolution:
                 return_val[:, :, i] = self._backprop(
                     d_l_d_out=d_l_d_out[:, :, i * self.num_filters:i * self.num_filters + self.num_filters],
                     learn_rate=learn_rate, input_val=self.input[:, :, i])
+                # TODO -add biases update
             return return_val
 
     def _backprop(self, d_l_d_out, learn_rate, input_val):
@@ -140,25 +147,12 @@ class Convolution:
         Performs a backward pass of the conv layer.
         - d_L_d_out is the loss gradient for this layer's outputs.
         - learn_rate is a float.
-
         '''
-        d_l_d_filters = np.zeros(self.filters.shape)
 
-        if self.padding:
-            input_val = self.padding_f(input_val, self.padding)
-
-        for i, j, im_region in self.iterate_regions(input_val):
-            for f in range(self.num_filters):
-                d_l_d_filters[f] += d_l_d_out[i, j, f] * im_region
-
-        # Update filters
-        self.filters -= learn_rate * d_l_d_filters
-
-        # TODO -add biases update
-
+        # Create return val if it's not first layer
+        return_val = None
         if not self.image:
             d_l_d_x = np.zeros(input_val.shape)
-            d_l_d_x = d_l_d_x[..., np.newaxis]
 
             padding = self.shape - 1 - self.padding
 
@@ -173,10 +167,25 @@ class Convolution:
                 w = np.rot90(self.filters[f], 2)
 
                 for i, j, im_region in self.iterate_regions(iter_val):
-                    d_l_d_x[i, j, 0] += np.sum(im_region * w)
-            return d_l_d_x
+                    d_l_d_x[i, j] += np.sum(im_region * w)
+            return_val = d_l_d_x
 
-        return None
+        # Update filters and biases
+        d_l_d_filters = np.zeros(self.filters.shape)
+
+        if self.padding:
+            input_val = self.padding_f(input_val, self.padding)
+
+        for i, j, im_region in self.iterate_regions(input_val):
+            for f in range(self.num_filters):
+                d_l_d_filters[f] += d_l_d_out[i, j, f] * im_region
+
+        # Update filters
+        self.filters -= learn_rate * d_l_d_filters
+        self.biases -= learn_rate * np.sum(d_l_d_out, axis=(0, 1))
+        # TODO -add biases update
+
+        return return_val
 
 
 if __name__ == '__main__':

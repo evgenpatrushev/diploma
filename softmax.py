@@ -1,13 +1,16 @@
 import numpy as np
 
+np.seterr(all='raise')
+
 
 class Softmax:
     # A standard fully-connected layer with softmax activation.
 
     def __init__(self, input_len, nodes):
         # We divide by input_len to reduce the variance of our initial values
-        self.weights = np.random.randn(input_len, nodes) / input_len
-        self.biases = np.ones(nodes)
+        self.weights = np.random.normal(loc=0, scale=5, size=(input_len, nodes)) / input_len
+        # self.weights = np.random.normal(loc=0, scale=0.2, size=(input_len, nodes))
+        self.biases = np.zeros(nodes)
         self.input_shape, self.input, self.totals, self.out = (), np.array([]), np.array([]), np.array([])
 
     def forward(self, input_val):
@@ -18,7 +21,8 @@ class Softmax:
         '''
         self.input_shape = input_val.shape
 
-        input_val = input_val.flatten()
+        input_val = input_val.flatten() / np.max(input_val)
+        # input_val = input_val.flatten()
         self.input = input_val
 
         totals = np.dot(input_val, self.weights) + self.biases
@@ -36,48 +40,41 @@ class Softmax:
         - learn_rate is a float.
         '''
 
+        for i, gradient in enumerate(d_l_d_out):
+            if gradient == 0:
+                continue
+
+            exp = np.exp(self.totals)
+            s = np.sum(exp)
+
+            # Gradients of out[i] against totals
+            d_out_d_in = - exp[i] * exp / (s ** 2)
+            d_out_d_in[i] = exp[i] * (s - exp[i]) / (s ** 2)
+
+            d_l_d_x = np.dot(self.weights, (gradient * d_out_d_in)[..., np.newaxis]).reshape(self.input_shape)
+
+            self.weights = self.weights - learn_rate * np.dot(self.input[..., np.newaxis],
+                                                              (gradient * d_out_d_in)[np.newaxis, ...])
+
+            self.biases = self.biases - learn_rate * gradient * d_out_d_in
+
+            return d_l_d_x
+
         exp = np.exp(self.totals)
         s = np.sum(exp)
 
         d_out_d_in = [(exp[i] * np.sum(list(exp[:i]) + list(exp[i + 1:]))) / (s ** 2) for i in range(len(exp))]
-        self.weights = self.weights - learn_rate * np.dot(self.input[np.newaxis, ...].T,
-                                                          (d_l_d_out * d_out_d_in)[np.newaxis, ...])
+        self.weights = self.weights - learn_rate * np.dot(self.input[..., np.newaxis],
+                                                          (gradient * d_out_d_in)[np.newaxis, ...])
         self.biases = self.biases - learn_rate * d_l_d_out * d_out_d_in
+        return np.dot(self.weights, (d_l_d_out * d_out_d_in)[..., np.newaxis]).reshape(self.input_shape)
 
-        # previous version --------------------------------------------------------------------------------------------
-        # We know only 1 element of d_L_d_out will be nonzero
-        # for i, gradient in enumerate(d_L_d_out):
-        #     if gradient == 0:
-        #         continue
-        #
-        #     # e^totals
-        #     t_exp = np.exp(self.last_totals)
-        #
-        #     # Sum of all e^totals
-        #     S = np.sum(t_exp)
-        #
-        #     # Gradients of out[i] against totals
-        #     d_out_d_t = -t_exp[i] * t_exp / (S ** 2)
-        #     d_out_d_t[i] = t_exp[i] * (S - t_exp[i]) / (S ** 2)
-        #
-        #     # Gradients of totals against weights/biases/input
-        #     d_t_d_w = self.last_input
-        #     d_t_d_b = 1
-        #     d_t_d_inputs = self.weights
-        #
-        #     # Gradients of loss against totals
-        #     d_L_d_t = gradient * d_out_d_t
-        #
-        #     # Gradients of loss against weights/biases/input
-        #     d_L_d_w = d_t_d_w[np.newaxis].T @ d_L_d_t[np.newaxis]
-        #     d_L_d_b = d_L_d_t * d_t_d_b
-        #     d_L_d_inputs = d_t_d_inputs @ d_L_d_t
-        #
-        #     # Update weights / biases
-        #     self.weights -= learn_rate * d_L_d_w
-        #     self.biases -= learn_rate * d_L_d_b
 
-        # return d_L_d_inputs.reshape(self.last_input_shape)
-        # -------------------------------------------------------------------------------------------------------------
-
-        return (d_l_d_out * d_out_d_in).reshape(self.input_shape)
+if __name__ == '__main__':
+    obj = Softmax(3, 3)
+    obj.weights = np.array([[0.1, 0.4, 0.8], [0.3, 0.7, 0.2], [0.5, 0.2, 0.9]])
+    obj.forward(input_val=np.array([0.938, 0.94, 0.98]))
+    label = np.array([1, 0, 0])
+    obj.out = np.array([0.26980, 0.32235, 0.40784])
+    d_l_d_out = -1 * label / obj.out - (1 - label) / (1 - obj.out)
+    obj.backprop(d_l_d_out, 0.01)

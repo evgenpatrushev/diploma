@@ -4,7 +4,7 @@ import warnings
 
 class MaxPool:
     # A Max Pooling layer using a pool size of 2.
-    def __init__(self, size_of_pool=2):
+    def __init__(self, size_of_pool=4):
         self.size_of_pool = size_of_pool
         self.input, self.output = np.array([]), np.array([])
 
