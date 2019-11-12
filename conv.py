@@ -12,10 +12,10 @@ class Convolution:
         self.shape = shape
 
         # self.filters = np.random.normal(loc=0, scale=0.2, size=(num_filters, shape, shape))
-        self.filters = np.random.normal(loc=0, scale=5, size=(num_filters, shape, shape)) / (
-                self.num_filters + self.shape + self.shape)
+        self.filters, self.grad_filters = np.random.normal(loc=0, scale=5, size=(num_filters, shape, shape)) / (
+                self.num_filters + self.shape + self.shape), np.zeros((num_filters, shape, shape))
 
-        self.biases = np.zeros(num_filters)
+        # self.biases, self.grad_biases = np.zeros(num_filters), np.zeros(num_filters)
         self.input, self.output = np.array([]), np.array([])
 
     def padding_f(self, matrix, padding):
@@ -43,41 +43,43 @@ class Convolution:
 
             if len(input_val.shape) == 2:
                 self._forward(input_val=input_val)
-                self.output = self.output + self.biases
+                # self.output = self.output + self.biases
+                self.output = self.output
 
             elif len(input_val.shape) == 3:
-                    """
-                    RGB images are splitting into three color layers and for each color are created filter and then 
-                    sum into one output (image/conv) with bias.
-                    
-                    Combination of 3 filters are created num_filters times
-                    
-                    Algorithm: 
-                        1 - get 3 color RGB layers
-                        2 - random filters for each RGB layer created 'num_filters' filters with shape 'shape*shape'
-                        3 - by num_filters convoluted each RGB layer and then sum for each RGB into one 
-                        4 - get np array with shape (shape, shape, num_filters)   
-                    """
+                """
+                RGB images are splitting into three color layers and for each color are created filter and then 
+                sum into one output (image/conv) with bias.
+                
+                Combination of 3 filters are created num_filters times
+                
+                Algorithm: 
+                    1 - get 3 color RGB layers
+                    2 - random filters for each RGB layer created 'num_filters' filters with shape 'shape*shape'
+                    3 - by num_filters convoluted each RGB layer and then sum for each RGB into one 
+                    4 - get np array with shape (shape, shape, num_filters)   
+                """
 
-                    filters = np.random.normal(loc=0, scale=5, size=(3, self.num_filters, self.shape, self.shape)) / (
-                            self.num_filters + self.shape + self.shape)
-                    # filters = np.random.normal(loc=0, scale=0.2, size=(3, self.num_filters, self.shape, self.shape))
-                    output = 0
+                filters = np.random.normal(loc=0, scale=5, size=(3, self.num_filters, self.shape, self.shape)) / (
+                        self.num_filters + self.shape + self.shape)
+                # filters = np.random.normal(loc=0, scale=0.2, size=(3, self.num_filters, self.shape, self.shape))
+                output = 0
 
-                    for img_color, filter_for_color in zip(input_val, filters):
-                        self.filters = filter_for_color
-                        self._forward(input_val=img_color)
-                        output += self.output
+                for img_color, filter_for_color in zip(input_val, filters):
+                    self.filters = filter_for_color
+                    self._forward(input_val=img_color)
+                    output += self.output
 
-                    self.filters = filters
-                    self.output = output + self.biases
+                self.filters = filters
+                # self.output = output + self.biases
+                self.output = output
 
         else:
             num_conv = input_val.shape[2]
             output = 0
             for i in range(num_conv):
                 self._forward(input_val=input_val[:, :, i])
-                self.output += self.biases
+                # self.output += self.biases
                 if not i:  # first iteration i == 0
                     output = self.output
                 else:
@@ -113,9 +115,11 @@ class Convolution:
         if self.image:
 
             if len(self.input.shape) == 2:
-                self._backprop(d_l_d_out, learn_rate, self.input)
+                self._backprop(d_l_d_out=d_l_d_out, learn_rate=learn_rate, input_val=self.input,
+                               d_l_d_f=self.grad_filters)
 
             elif len(self.input.shape) == 3:
+                # TODO -remake
                 filters = self.filters
                 for i, img_color, filters_for_color in enumerate(zip(self.input, filters)):
                     self.filters = filters_for_color
@@ -127,22 +131,18 @@ class Convolution:
             d_L_d_out have to be matrix same size as output of forward function 
             but with error for backprop
             """
-            # TODO -sure about backprop at multiple conv obj with same filters (formula) ... look good but not sure
+
             num_conv = self.input.shape[2]
             return_val = np.zeros(self.input.shape)
 
             for i in range(num_conv):
-                # save variant of backprop, but i thnk coeff not correct
-                # self._backprop(d_l_d_out=d_l_d_out[:, :, i * self.shape:i + self.shape], learn_rate=learn_rate,
-                #                input_val=self.input[:, :, i])
-
                 return_val[:, :, i] = self._backprop(
                     d_l_d_out=d_l_d_out[:, :, i * self.num_filters:i * self.num_filters + self.num_filters],
-                    learn_rate=learn_rate, input_val=self.input[:, :, i])
-                # TODO -add biases update
+                    input_val=self.input[:, :, i], d_l_d_f=self.grad_filters, learn_rate=learn_rate)
+
             return return_val
 
-    def _backprop(self, d_l_d_out, learn_rate, input_val):
+    def _backprop(self, d_l_d_out, input_val, d_l_d_f, learn_rate):
         '''
         Performs a backward pass of the conv layer.
         - d_L_d_out is the loss gradient for this layer's outputs.
@@ -171,21 +171,68 @@ class Convolution:
             return_val = d_l_d_x
 
         # Update filters and biases
-        d_l_d_filters = np.zeros(self.filters.shape)
 
         if self.padding:
             input_val = self.padding_f(input_val, self.padding)
 
         for i, j, im_region in self.iterate_regions(input_val):
             for f in range(self.num_filters):
-                d_l_d_filters[f] += d_l_d_out[i, j, f] * im_region
+                d_l_d_f[f] += d_l_d_out[i, j, f] * im_region
 
-        # Update filters
-        self.filters -= learn_rate * d_l_d_filters
-        self.biases -= learn_rate * np.sum(d_l_d_out, axis=(0, 1))
+        # self.biases -= np.sum(d_l_d_out, axis=(0, 1))
         # TODO -add biases update
 
         return return_val
+
+    def update_weights(self, learning_rate=0.001, l2_penalty=1e-4, optimization='adam', epsilon=1e-8,
+                       correct_bias=False, beta1=0.9, beta2=0.999, iter=999):
+        if optimization != 'adam':
+            self.filters -= learning_rate * (self.grad_filters + l2_penalty * self.filters)
+            # self.biases -= learning_rate * (self.grads_biases + l2_penalty * self.biases)
+
+        else:
+            if correct_bias:
+                w_first_moment = self.momentum_cache['dW'] / (1 - beta1 ** iter)
+                # b_first_moment = self.momentum_cache['db'] / (1 - beta1 ** iter)
+                w_second_moment = self.rmsprop_cache['dW'] / (1 - beta2 ** iter)
+                # b_second_moment = self.rmsprop_cache['db'] / (1 - beta2 ** iter)
+            else:
+                w_first_moment = self.momentum_cache['dW']
+                # b_first_moment = self.momentum_cache['db']
+                w_second_moment = self.rmsprop_cache['dW']
+                # b_second_moment = self.rmsprop_cache['db']
+
+            w_learning_rate = learning_rate / (np.sqrt(w_second_moment) + epsilon)
+            # b_learning_rate = learning_rate / (np.sqrt(b_second_moment) + epsilon)
+
+            self.filters -= w_learning_rate * (w_first_moment + l2_penalty * self.filters)
+            # self.params['b'] -= b_learning_rate * (b_first_moment + l2_penalty * self.params['b'])
+
+    def init_cache(self):
+        cache = dict()
+        cache['dW'] = np.zeros_like(self.filters)
+        # cache['db'] = np.zeros_like(self.params['b'])
+        return cache
+
+    def momentum(self, beta=0.9):
+        if not self.momentum_cache:
+            self.momentum_cache = self.init_cache()
+        self.momentum_cache['dW'] = beta * self.momentum_cache['dW'] + (1 - beta) * self.grad_filters
+        # self.momentum_cache['db'] = beta * self.momentum_cache['db'] + (1 - beta) * self.grads['db']
+
+    def rmsprop(self, beta=0.999, amsprop=False):
+        if not self.rmsprop_cache:
+            self.rmsprop_cache = self.init_cache()
+
+        new_dw = beta * self.rmsprop_cache['dW'] + (1 - beta) * (self.grad_filters**2)
+        # new_db = beta * self.rmsprop_cache['db'] + (1 - beta) * (self.grads['db']**2)
+
+        if amsprop:
+            self.rmsprop_cache['dW'] = np.maximum(self.rmsprop_cache['dW'], new_dw)
+            # self.rmsprop_cache['db'] = np.maximum(self.rmsprop_cache['db'], new_db)
+        else:
+            self.rmsprop_cache['dW'] = new_dw
+            # self.rmsprop_cache['db'] = new_db
 
 
 if __name__ == '__main__':

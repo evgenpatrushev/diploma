@@ -11,25 +11,31 @@ train_images = mnist.train_images()[:1000]
 train_labels = mnist.train_labels()[:1000]
 test_images = mnist.test_images()[:1000]
 test_labels = mnist.test_labels()[:1000]
-lr = 0.005
+lr = 10**(-6)
 load_weights = False
 
-l1_conv_start = Convolution(num_filters=8, shape=3, image=True)  # 28x28x1 -> 26x26x8
-l2_pool = MaxPool(size_of_pool=2)  # 26x26x8 -> 13x13x8
-l3_conv = Convolution(num_filters=8, shape=4)  # 13x13x8-> 10x10x64
-l4_pool = MaxPool(size_of_pool=2)  # 10x10x64 -> 5x5x64
-l5_conv = Convolution(num_filters=5, shape=3)  # 5x5x64 -> 3x3x320
-l6_pool = MaxPool(size_of_pool=3)  # 3x3x320 -> 1x1x320
-softmax = Softmax(1 * 1 * 320, 10)  # 13x13x8 -> 10
+# l1_conv_start = Convolution(num_filters=3, shape=2, image=True)  # 7x7x1 -> 6x6x3
+# l2_pool = MaxPool(size_of_pool=2)  # 6x6x3 -> 3x3x3
+# l3_conv = Convolution(num_filters=3, shape=2)  # 3x3x3-> 2x2x9
+# l4_pool = MaxPool(size_of_pool=2)  # 2x2x9 -> 1x1x9
+# softmax = Softmax(1 * 1 * 9, 10)  # 13x13x8 -> 10
+# pool = MaxPool(4)
+
+l1_conv_start = Convolution(num_filters=4, shape=3, image=True)  # 28x28x1 -> 26x26x4
+l2_pool = MaxPool(size_of_pool=2)  # 26x26x4 -> 13x13x4
+l3_conv = Convolution(num_filters=3, shape=2)  # 13x13x4-> 12x12x12
+l4_pool = MaxPool(size_of_pool=2)  # 12x12x12 -> 6x6x12
+l5_conv = Convolution(num_filters=3, shape=3)  # 6x6x12-> 4x4x36
+l6_pool = MaxPool(size_of_pool=4)  # 4x4x36 -> 1x1x36
+softmax = Softmax(1 * 1 * 36, 10)  # 5x5x64 -> 10
 
 
-def train(train_x, train_y, p=True):
-
+def train(train_x, train_y, p=False):
     if p:
         print('train with permutation')
     else:
         print('train without permutation')
-    for epoch in range(4):
+    for epoch in range(6):
         print('--- Epoch %d ---' % (epoch + 1))
 
         # Shuffle the training data
@@ -45,6 +51,8 @@ def train(train_x, train_y, p=True):
 
         for i, obj in enumerate(zip(train_img, train_l)):
             img, l = obj
+            # pool.forward((img)[..., np.newaxis])
+            # img = np.round(pool.output[:, :, 0], 2)
 
             l1_conv_start.forward(img)
             l2_pool.forward(l1_conv_start.output)
@@ -89,9 +97,7 @@ def train(train_x, train_y, p=True):
         l2_pool.forward(l1_conv_start.output)
         l3_conv.forward(l2_pool.output)
         l4_pool.forward(l3_conv.output)
-        l5_conv.forward(l4_pool.output)
-        l6_pool.forward(l5_conv.output)
-        softmax.forward(l6_pool.output)
+        softmax.forward(l4_pool.output)
 
         loss += -np.log(softmax.out[label])
         num_correct += 1 if np.argmax(softmax.out) == label else 0
