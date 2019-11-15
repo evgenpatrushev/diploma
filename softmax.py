@@ -7,11 +7,17 @@ class Softmax:
     # A standard fully-connected layer with softmax activation.
 
     def __init__(self, input_len, nodes):
+
         # We divide by input_len to reduce the variance of our initial values
-        self.weights = np.random.normal(loc=0, scale=5, size=(input_len, nodes)) / input_len
+        self.weights, self.grad_weights = np.random.normal(loc=0, scale=5, size=(input_len, nodes)) / input_len, \
+                                          np.zeros((input_len, nodes))
         # self.weights = np.random.normal(loc=0, scale=0.2, size=(input_len, nodes))
-        self.biases = np.zeros(nodes)
-        self.input_shape, self.input, self.totals, self.out = (), np.array([]), np.array([]), np.array([])
+        self.biases, self.grad_biases = np.zeros(nodes), np.zeros(nodes)
+
+        self.first_momentum_dw, self.first_momentum_db = np.zeros(self.weights.shape), np.zeros(self.biases.shape)
+        self.second_momentum_dw, self.second_momentum_db = np.zeros(self.weights.shape), np.zeros(self.biases.shape)
+
+        self.input_shape, self.input, self.totals, self.output = (), np.array([]), np.array([]), np.array([])
 
     def forward(self, input_val):
         '''
@@ -29,10 +35,10 @@ class Softmax:
         self.totals = totals
 
         exp = np.exp(totals)
-        self.out = exp / np.sum(exp, axis=0)
-        return self.out
+        self.output = exp / np.sum(exp, axis=0)
+        return self.output
 
-    def backprop(self, d_l_d_out, learn_rate):
+    def backprop(self, d_l_d_out):
         '''
         Performs a backward pass of the softmax layer.
         Returns the loss gradient for this layer's inputs.
@@ -53,21 +59,61 @@ class Softmax:
 
             d_l_d_x = np.dot(self.weights, (gradient * d_out_d_in)[..., np.newaxis]).reshape(self.input_shape)
 
-            self.weights = self.weights - learn_rate * np.dot(self.input[..., np.newaxis],
-                                                              (gradient * d_out_d_in)[np.newaxis, ...])
+            self.grad_weights = np.dot(self.input[..., np.newaxis], (gradient * d_out_d_in)[np.newaxis, ...])
 
-            self.biases = self.biases - learn_rate * gradient * d_out_d_in
+            self.grad_biases = gradient * d_out_d_in
 
             return d_l_d_x
 
-        exp = np.exp(self.totals)
-        s = np.sum(exp)
+        raise RuntimeError("Fully zero dL/d_out")
 
-        d_out_d_in = [(exp[i] * np.sum(list(exp[:i]) + list(exp[i + 1:]))) / (s ** 2) for i in range(len(exp))]
-        self.weights = self.weights - learn_rate * np.dot(self.input[..., np.newaxis],
-                                                          (gradient * d_out_d_in)[np.newaxis, ...])
-        self.biases = self.biases - learn_rate * d_l_d_out * d_out_d_in
-        return np.dot(self.weights, (d_l_d_out * d_out_d_in)[..., np.newaxis]).reshape(self.input_shape)
+    def update_weights(self, learning_rate=0.001, l2_penalty=1e-4, optimization='adam', epsilon=1e-8,
+                       correct_bias=False, beta1=0.9, beta2=0.999, iter=999):
+        if optimization != 'adam':
+            self.weights -= learning_rate * (self.grad_weights + l2_penalty * self.weights)
+            self.biases -= learning_rate * (self.grad_biases + l2_penalty * self.biases)
+
+        else:
+            while True:
+                if correct_bias:
+                    w_first_moment = self.first_momentum_dw / (1 - beta1 ** iter)
+                    b_first_moment = self.first_momentum_db / (1 - beta1 ** iter)
+                    w_second_moment = self.second_momentum_dw / (1 - beta2 ** iter)
+                    b_second_moment = self.second_momentum_db / (1 - beta2 ** iter)
+                else:
+                    w_first_moment = self.first_momentum_dw
+                    b_first_moment = self.first_momentum_db
+                    w_second_moment = self.second_momentum_dw
+                    b_second_moment = self.second_momentum_db
+
+                w_learning_rate = learning_rate / (np.sqrt(w_second_moment) + epsilon)
+                b_learning_rate = learning_rate / (np.sqrt(b_second_moment) + epsilon)
+
+                weights = self.weights - w_learning_rate * (w_first_moment + l2_penalty * self.weights)
+                biases = self.biases - b_learning_rate * (b_first_moment + l2_penalty * self.biases)
+
+                if np.abs(self.weights - weights).any() < learning_rate or \
+                   np.abs(self.biases - biases).any() < learning_rate:
+                    break
+
+                self.weights, self.biases = weights, biases
+                self.first_momentum()
+                self.second_momentum()
+
+    def first_momentum(self, beta=0.9):
+        self.first_momentum_dw = beta * self.first_momentum_dw + (1 - beta) * self.grad_weights
+        self.first_momentum_db = beta * self.first_momentum_db + (1 - beta) * self.grad_biases
+
+    def second_momentum(self, beta=0.999, amsprop=False):
+        new_dw = beta * self.second_momentum_dw + (1 - beta) * (self.grad_weights ** 2)
+        new_db = beta * self.second_momentum_db + (1 - beta) * (self.grad_biases ** 2)
+
+        if amsprop:
+            self.second_momentum_dw = np.maximum(self.second_momentum_dw, new_dw)
+            self.second_momentum_db = np.maximum(self.second_momentum_db, new_db)
+        else:
+            self.second_momentum_dw = new_dw
+            self.second_momentum_db = new_db
 
 
 if __name__ == '__main__':
@@ -75,6 +121,6 @@ if __name__ == '__main__':
     obj.weights = np.array([[0.1, 0.4, 0.8], [0.3, 0.7, 0.2], [0.5, 0.2, 0.9]])
     obj.forward(input_val=np.array([0.938, 0.94, 0.98]))
     label = np.array([1, 0, 0])
-    obj.out = np.array([0.26980, 0.32235, 0.40784])
-    d_l_d_out = -1 * label / obj.out - (1 - label) / (1 - obj.out)
-    obj.backprop(d_l_d_out, 0.01)
+    obj.output = np.array([0.26980, 0.32235, 0.40784])
+    d_l_d_out = -1 * label / obj.output - (1 - label) / (1 - obj.output)
+    obj.backprop(d_l_d_out)

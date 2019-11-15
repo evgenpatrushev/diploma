@@ -10,13 +10,17 @@ class Convolution:
         self.stride = stride
         self.padding = padding
         self.shape = shape
+        self.activation = 'ReLU'
 
         # self.filters = np.random.normal(loc=0, scale=0.2, size=(num_filters, shape, shape))
         self.filters, self.grad_filters = np.random.normal(loc=0, scale=5, size=(num_filters, shape, shape)) / (
                 self.num_filters + self.shape + self.shape), np.zeros((num_filters, shape, shape))
 
-        # self.biases, self.grad_biases = np.zeros(num_filters), np.zeros(num_filters)
+        self.biases, self.grad_biases = np.zeros(num_filters), np.zeros(num_filters)
         self.input, self.output = np.array([]), np.array([])
+
+        self.first_momentum_dw, self.first_momentum_db = np.zeros(self.filters.shape), np.zeros(self.biases.shape)
+        self.second_momentum_dw, self.second_momentum_db = np.zeros(self.filters.shape), np.zeros(self.biases.shape)
 
     def padding_f(self, matrix, padding):
         h, w = matrix.shape
@@ -108,14 +112,14 @@ class Convolution:
 
         return self.output
 
-    def back_propagation(self, d_l_d_out, learn_rate):
+    def backprop(self, d_l_d_out):
 
         # TODO assert if d_l_d_out shape != input shape
 
         if self.image:
 
             if len(self.input.shape) == 2:
-                self._backprop(d_l_d_out=d_l_d_out, learn_rate=learn_rate, input_val=self.input,
+                self._backprop(d_l_d_out=d_l_d_out, input_val=self.input,
                                d_l_d_f=self.grad_filters)
 
             elif len(self.input.shape) == 3:
@@ -123,7 +127,7 @@ class Convolution:
                 filters = self.filters
                 for i, img_color, filters_for_color in enumerate(zip(self.input, filters)):
                     self.filters = filters_for_color
-                    self._backprop(d_l_d_out=d_l_d_out, learn_rate=learn_rate, input_val=img_color)
+                    self._backprop(d_l_d_out=d_l_d_out, input_val=img_color)
                     filters[i] = self.filters
 
         else:
@@ -138,11 +142,11 @@ class Convolution:
             for i in range(num_conv):
                 return_val[:, :, i] = self._backprop(
                     d_l_d_out=d_l_d_out[:, :, i * self.num_filters:i * self.num_filters + self.num_filters],
-                    input_val=self.input[:, :, i], d_l_d_f=self.grad_filters, learn_rate=learn_rate)
+                    input_val=self.input[:, :, i], d_l_d_f=self.grad_filters)
 
             return return_val
 
-    def _backprop(self, d_l_d_out, input_val, d_l_d_f, learn_rate):
+    def _backprop(self, d_l_d_out, input_val, d_l_d_f):
         '''
         Performs a backward pass of the conv layer.
         - d_L_d_out is the loss gradient for this layer's outputs.
@@ -170,8 +174,7 @@ class Convolution:
                     d_l_d_x[i, j] += np.sum(im_region * w)
             return_val = d_l_d_x
 
-        # Update filters and biases
-
+        # Update grad
         if self.padding:
             input_val = self.padding_f(input_val, self.padding)
 
@@ -179,8 +182,7 @@ class Convolution:
             for f in range(self.num_filters):
                 d_l_d_f[f] += d_l_d_out[i, j, f] * im_region
 
-        # self.biases -= np.sum(d_l_d_out, axis=(0, 1))
-        # TODO -add biases update
+        self.grad_biases += np.sum(d_l_d_out, axis=(0, 1))
 
         return return_val
 
@@ -188,51 +190,40 @@ class Convolution:
                        correct_bias=False, beta1=0.9, beta2=0.999, iter=999):
         if optimization != 'adam':
             self.filters -= learning_rate * (self.grad_filters + l2_penalty * self.filters)
-            # self.biases -= learning_rate * (self.grads_biases + l2_penalty * self.biases)
+            self.biases -= learning_rate * (self.grad_biases + l2_penalty * self.biases)
 
         else:
             if correct_bias:
-                w_first_moment = self.momentum_cache['dW'] / (1 - beta1 ** iter)
-                # b_first_moment = self.momentum_cache['db'] / (1 - beta1 ** iter)
-                w_second_moment = self.rmsprop_cache['dW'] / (1 - beta2 ** iter)
-                # b_second_moment = self.rmsprop_cache['db'] / (1 - beta2 ** iter)
+                w_first_moment = self.first_momentum_dw / (1 - beta1 ** iter)
+                b_first_moment = self.first_momentum_db / (1 - beta1 ** iter)
+                w_second_moment = self.second_momentum_dw / (1 - beta2 ** iter)
+                b_second_moment = self.second_momentum_db / (1 - beta2 ** iter)
             else:
-                w_first_moment = self.momentum_cache['dW']
-                # b_first_moment = self.momentum_cache['db']
-                w_second_moment = self.rmsprop_cache['dW']
-                # b_second_moment = self.rmsprop_cache['db']
+                w_first_moment = self.first_momentum_dw
+                b_first_moment = self.first_momentum_db
+                w_second_moment = self.second_momentum_dw
+                b_second_moment = self.second_momentum_db
 
             w_learning_rate = learning_rate / (np.sqrt(w_second_moment) + epsilon)
-            # b_learning_rate = learning_rate / (np.sqrt(b_second_moment) + epsilon)
+            b_learning_rate = learning_rate / (np.sqrt(b_second_moment) + epsilon)
 
             self.filters -= w_learning_rate * (w_first_moment + l2_penalty * self.filters)
-            # self.params['b'] -= b_learning_rate * (b_first_moment + l2_penalty * self.params['b'])
+            self.biases -= b_learning_rate * (b_first_moment + l2_penalty * self.biases)
 
-    def init_cache(self):
-        cache = dict()
-        cache['dW'] = np.zeros_like(self.filters)
-        # cache['db'] = np.zeros_like(self.params['b'])
-        return cache
+    def first_momentum(self, beta=0.9):
+        self.first_momentum_dw = beta * self.first_momentum_dw + (1 - beta) * self.grad_filters
+        self.first_momentum_db = beta * self.first_momentum_db + (1 - beta) * self.grad_biases
 
-    def momentum(self, beta=0.9):
-        if not self.momentum_cache:
-            self.momentum_cache = self.init_cache()
-        self.momentum_cache['dW'] = beta * self.momentum_cache['dW'] + (1 - beta) * self.grad_filters
-        # self.momentum_cache['db'] = beta * self.momentum_cache['db'] + (1 - beta) * self.grads['db']
-
-    def rmsprop(self, beta=0.999, amsprop=False):
-        if not self.rmsprop_cache:
-            self.rmsprop_cache = self.init_cache()
-
-        new_dw = beta * self.rmsprop_cache['dW'] + (1 - beta) * (self.grad_filters**2)
-        # new_db = beta * self.rmsprop_cache['db'] + (1 - beta) * (self.grads['db']**2)
+    def second_momentum(self, beta=0.999, amsprop=False):
+        new_dw = beta * self.second_momentum_dw + (1 - beta) * (self.grad_filters ** 2)
+        new_db = beta * self.second_momentum_db + (1 - beta) * (self.grad_biases ** 2)
 
         if amsprop:
-            self.rmsprop_cache['dW'] = np.maximum(self.rmsprop_cache['dW'], new_dw)
-            # self.rmsprop_cache['db'] = np.maximum(self.rmsprop_cache['db'], new_db)
+            self.second_momentum_dw = np.maximum(self.second_momentum_dw, new_dw)
+            self.second_momentum_db = np.maximum(self.second_momentum_db, new_db)
         else:
-            self.rmsprop_cache['dW'] = new_dw
-            # self.rmsprop_cache['db'] = new_db
+            self.second_momentum_dw = new_dw
+            self.second_momentum_db = new_db
 
 
 if __name__ == '__main__':
