@@ -103,3 +103,14 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+report/
+ISICArchive/bad_data
+ISICArchive/images
+ISICArchive/images_34x34
+ISICArchive/images_68x68
+ISICArchive/images_102x102
+ISICArchive/segmentation
+
+cnn_package/data_login.txt
+
+.DS_store
