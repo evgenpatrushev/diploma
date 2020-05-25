@@ -15,7 +15,7 @@ from threading import Thread
 
 import matplotlib.pyplot as plt
 from keras.preprocessing import image
-from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.metrics import accuracy_score, confusion_matrix, roc_curve, auc
 
 os.environ['KERAS_BACKEND'] = 'tensorflow'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -55,15 +55,16 @@ class DownloadThreadImgInfo(Thread):
         Thread.__init__(self)
         self.count = count
         self.from_count = from_count
-        self.name = name
+        self.thread_name = name
 
     def run(self):
-        print(f"THREAD INFO: {self.name} start working: from_count = {self.from_count}, count = {self.count}")
+        print(f"THREAD INFO: {self.thread_name} start working: from_count = {self.from_count}, count = {self.count}")
 
         data = DownloadDataset()
-        data.download_info(count=self.count, from_count=self.from_count, thread_name=self.name, just_melanoma=True)
+        data.download_info(count=self.count, from_count=self.from_count, thread_name=self.thread_name,
+                           just_melanoma=True)
 
-        print(f"THREAD INFO: {self.name} end working ")
+        print(f"THREAD INFO: {self.thread_name} end working ")
 
 
 class DownloadThreadImg(Thread):
@@ -473,9 +474,7 @@ class HandlerCNN:
         def scheduler(epoch):
             epoch_count = 50
             coefficient = 1
-            # if epoch % epoch_count == 0 and epoch != epoch_count and epoch != 0:
-            #     epoch_count = epoch + epoch_count
-            #     coefficient += 1
+
             if epoch < epoch_count:
                 return self.learning_rate_const / coefficient
             else:
@@ -585,7 +584,8 @@ class HandlerCNN:
                 layer.bias.initializer.run(session=session)
 
     def load_cnn(self, x_train, x_test, y_train, y_test, model, optimizer, nb_epoch=None, reset_weights_bool=False,
-                 batch_size=None, model_name='', plotting=True, generator=True, steps_per_epoch=None, logging=2):
+                 batch_size=None, model_name='', plotting=True, generator=True, steps_per_epoch=None, logging=2,
+                 measurement=True):
 
         if nb_epoch is None:
             nb_epoch = self.nb_epoch_const
@@ -651,6 +651,9 @@ class HandlerCNN:
             ax1.legend(loc="lower left")
             ax2.legend(loc="lower left")
             plt.show()
+
+        if measurement:
+            self.metrics_cnn(model.predict(x_test))
 
         return fitted_model, np.round(scores[1] * 100, 2)
 
@@ -1121,6 +1124,91 @@ class HandlerCNN:
         plt.show()
         print(df_pivot)
 
+    def metrics_cnn(self, y_pred):
+
+        fpr, tpr, thresholds_rf = roc_curve(np.argmax(self.y_test, axis=1), y_pred[:, 1])
+        auc_value = auc(fpr, tpr)
+
+        plt.plot([0, 1], [0, 1], 'k--')
+        plt.plot(fpr, tpr, label='Roc auc (area = {:.3f})'.format(auc_value))
+        plt.xlabel('False positive rate')
+        plt.ylabel('True positive rate')
+        plt.title('ROC curve')
+        plt.legend(loc='best')
+        plt.show()
+
+        matrix = confusion_matrix(np.argmax(self.y_test, axis=1), np.argmax(y_pred, axis=1))
+
+        print(pd.DataFrame(matrix,
+                           columns=['Predict "No melanoma"', 'Predict "Melanoma"'],
+                           index=['Actual "No melanoma"', 'Actual "Melanoma"']))
+
+        tn, fp, fn, tp = matrix.ravel()
+
+        sensitivity = tp / (tp + fn)
+        precision = tp / (tp + fp)
+        specificity = 1 - fp / (fp + tn)
+        f1_score = 2 * sensitivity * precision / (sensitivity + precision)
+        dor = sensitivity * specificity / ((1 - sensitivity) * (1 - specificity))
+
+        print(f'sensitivity: {np.round(sensitivity, 3)}')
+        print(f'precision: {np.round(precision, 3)}')
+        print(f'specificity: {np.round(specificity, 3)}')
+        print(f'f1_score: {np.round(f1_score, 3)}')
+        print(f'dor: {np.round(dor, 3)}')
+
+
+def run(img=None):
+    if img is None:
+        img = [['ISIC_0001910', 0],
+               # ['ISIC_0034287', 1],
+               # ['ISIC_0001026', 0],
+               # ['ISIC_0033611', 1],
+               # ['ISIC_0000091', 0],
+               # ['ISIC_0000253', 0],
+               # ['ISIC_0012678', 1],
+               ['ISIC_0010990', 1]]
+
+    print('Initialize cnn handler:')
+    cnn_h = HandlerCNN()
+
+    train, test = cnn_h.dataset['sharped_normal']
+
+    try:
+        print('Loading model...')
+
+        f_model = load_model(os.path.join(cnn_h.models_down_dir, 'final_model.h5'))
+        scores = f_model.evaluate(test, cnn_h.y_test, verbose=0)
+        print("Accuracy on test data: %.2f%%" % (scores[1] * 100))
+
+    except Exception as e:
+        print('No final model')
+        return -1
+
+    print('------------------------------')
+    print('Predicting ...')
+
+    print('Confusion matrix for test data:')
+    print(pd.DataFrame(confusion_matrix(np.argmax(cnn_h.y_test, axis=1), np.argmax(f_model.predict(test), axis=1)),
+                       columns=['Predict "No melanoma"', 'Predict "Melanoma"'],
+                       index=['Actual "No melanoma"', 'Actual "Melanoma"']))
+
+    print('------------------------------\n')
+    for name, melanoma in img:
+        print(f'Enter img name: {name}.jpg')
+        print(f'Label for this img is "{"melanoma" if melanoma else "no melanoma"}"')
+
+        image_i = image.img_to_array(image.load_img(os.path.join(cnn_h.path_to_archive, 'images', f"{name}.jpg"),
+                                                    target_size=(cnn_h.rows, cnn_h.cols)))
+        val, bins = np.histogram(image_i.flatten(), normed=True)
+        val = np.cumsum(np.diff(bins) * val)
+
+        image_i = np.interp(image_i.flatten(), bins[:-1], val * 255).reshape(image_i.shape)
+        image_i /= 255
+
+        pr = f_model.predict(np.array([image_i]))
+        print(f'Predicted melanoma is {round(float(pr[0][1]) * 100, 2)}%', '\n')
+
 
 def model_tuning(model_function, param=None):
     if param is None:
@@ -1192,7 +1280,7 @@ def model_tuning(model_function, param=None):
     return time_df
 
 
-def model_compare():
+def model_tuning_compare(compare=True):
     def model1_1(count, shape, rows, cols, gray):
         model = Sequential()
         model.add(Conv2D(count, shape, padding='same', input_shape=(rows, cols, gray), activation='relu'))
@@ -1246,103 +1334,71 @@ def model_compare():
 
         model.add(Flatten())
         model.add(Dense(2, activation='softmax'))
+        return model
 
-    time_1 = model_tuning(model1_1)
-    time_2 = model_tuning(model1_2)
-    time_3 = model_tuning(model1_3)
+    def model2_2(count, shape, rows, cols, gray):
+        model = Sequential()
 
-    fig, ax = plt.subplots()
+        model.add(Conv2D(count // 2, shape, padding='same', input_shape=(rows, cols, gray), activation='relu'))
+        model.add(Conv2D(count // 2, shape, activation='relu', padding='same'))
+        model.add(MaxPooling2D(pool_size=(2, 2)))
+        model.add(Dropout(0.25))
 
-    df = pd.DataFrame({'model #1_1': time_1['time (min)'].values,
-                       'model #1_2': time_2['time (min)'].values,
-                       'model #1_3': time_3['time (min)'].values}, index=time_1['variant id'].values)
-    df.plot.bar(ax=ax)
-    plt.xlabel('variant id')
-    plt.ylabel('time (min)')
-    plt.title('Time bar for models tuning')
-    plt.show()
+        model.add(Conv2D(count // 2, shape, padding='same', activation='relu'))
+        model.add(Conv2D(count // 2, shape, activation='relu', padding='same'))
+        model.add(MaxPooling2D(pool_size=(2, 2)))
+        model.add(Dropout(0.25))
+
+        model.add(Flatten())
+        model.add(Dense(2, activation='softmax'))
+        return model
+
+    if compare:
+        count_list = [32, 32, 64, 64]
+        shape_list = [(3, 3), (5, 5), (3, 3), (5, 5)]
+        param = zip(count_list, shape_list)
+
+        model_tuning(model2_1)
+        model_tuning(model2_2, param)
+    return model1_1, model1_2, model1_3, model2_1, model2_2
 
 
 if __name__ == '__main__':
-    # model_compare()
-    print('Initialize cnn handler:')
+    models = model_tuning_compare(compare=False)
+
     cnn_h = HandlerCNN()
-    cnn_h.schedule_bool = True
+    cnn_h.schedule_bool = False
+    cnn_h.early_stop_param = 35
+    cnn_h.steps_per_epoch_const = 500
+    cnn_h.learning_rate_const = 0.001
+    train, test = cnn_h.dataset['sharped_normal']
 
     optimum = SGD(lr=cnn_h.learning_rate_const, decay=cnn_h.decay_const,
                   momentum=cnn_h.momentum_const, nesterov=True)
+
+    epoch = 200
+    cnn_h.load_cnn(train, test, cnn_h.y_train, cnn_h.y_test, cnn_h.model2, optimum, nb_epoch=epoch,
+                   reset_weights_bool=False,
+                   batch_size=None, model_name='final_model_1', plotting=True, generator=True,
+                   steps_per_epoch=None, logging=2)
+
     epoch = 250
+    count, shape = 32, (5, 5)
 
-    train, test = cnn_h.dataset['sharped_normal']
+    model = models[1](count, shape, cnn_h.rows, cnn_h.cols, cnn_h.gray)
+    cnn_h.load_cnn(train, test, cnn_h.y_train, cnn_h.y_test, model, optimum, nb_epoch=epoch,
+                   reset_weights_bool=False,
+                   batch_size=None, model_name='final_model_2', plotting=True, generator=True,
+                   steps_per_epoch=None, logging=2)
 
-    print('------------------------------')
-    print('Initialize model...')
-    final_model = Sequential()
+    model = models[-2](count, shape, cnn_h.rows, cnn_h.cols, cnn_h.gray)
+    cnn_h.load_cnn(train, test, cnn_h.y_train, cnn_h.y_test, model, optimum, nb_epoch=epoch,
+                   reset_weights_bool=False,
+                   batch_size=None, model_name='final_model_3', plotting=True, generator=True,
+                   steps_per_epoch=None, logging=2)
 
-    final_model.add(
-        Conv2D(150 // 3, (5, 5), padding='same', input_shape=(cnn_h.rows, cnn_h.cols, cnn_h.gray), activation='relu'))
-    final_model.add(MaxPooling2D(pool_size=(2, 2)))
-    final_model.add(Dropout(0.25))
-
-    final_model.add(Conv2D(150 // 3, (5, 5), padding='same', activation='relu'))
-    final_model.add(MaxPooling2D(pool_size=(2, 2)))
-    final_model.add(Dropout(0.25))
-
-    final_model.add(Conv2D(150 // 3, (5, 5), padding='same', activation='relu'))
-    final_model.add(MaxPooling2D(pool_size=(2, 2)))
-    final_model.add(Dropout(0.25))
-
-    final_model.add(Flatten())
-    final_model.add(Dense(2, activation='softmax'))
-
-    try:
-        print('Loading model...')
-
-        f_model = load_model(os.path.join(cnn_h.models_down_dir, 'final_model.h5'))
-        scores = f_model.evaluate(test, cnn_h.y_test, verbose=0)
-        print("Accuracy on test data: %.2f%%" % (scores[1] * 100))
-
-    except Exception as e:
-        print('Fit model...')
-
-        m, accuracy = cnn_h.load_cnn(train, test, cnn_h.y_train, cnn_h.y_test, final_model, optimum, nb_epoch=epoch,
-                                     reset_weights_bool=False,
-                                     batch_size=None, model_name='final_model', plotting=True, generator=True,
-                                     steps_per_epoch=None, logging=1)
-        f_model = load_model(os.path.join(cnn_h.models_down_dir, 'final_model.h5'))
-
-    print('------------------------------')
-    print('Predicting ...')
-    img = [['ISIC_0001910', 0],
-           ['ISIC_0034287', 1],
-           ['ISIC_0001026', 0],
-           ['ISIC_0033611', 1],
-           ['ISIC_0000091', 0],
-           ['ISIC_0000253', 0],
-           ['ISIC_0012678', 1],
-           ['ISIC_0010990', 1]]
-
-    print('Confusion matrix for test data:')
-    print(pd.DataFrame(confusion_matrix(np.argmax(cnn_h.y_test, axis=1), np.argmax(f_model.predict(test), axis=1)),
-                       columns=['Predict "No melanoma"', 'Predict "Melanoma"'],
-                       index=['Actual "No melanoma"', 'Actual "Melanoma"']))
-
-    print('------------------------------\n')
-    for name, melanoma in img:
-        print(f'Enter img name: {name}.jpg')
-        print(f'Label for this img is "{"melanoma" if melanoma else "no melanoma"}"')
-        image_show = image.load_img(os.path.join(cnn_h.path_to_archive, 'images', f"{name}.jpg"))
-        # image_show.show(title=f'{name}')
-
-        image_i = image.img_to_array(image.load_img(os.path.join(cnn_h.path_to_archive, 'images', f"{name}.jpg"),
-                                                    target_size=(cnn_h.rows, cnn_h.cols)))
-        val, bins = np.histogram(image_i.flatten(), normed=True)
-        val = np.cumsum(np.diff(bins) * val)
-
-        image_i = np.interp(image_i.flatten(), bins[:-1], val * 255).reshape(image_i.shape)
-        image_i /= 255
-
-        pr = f_model.predict(np.array([image_i]))
-        print(f'Predicted melanoma is {round(float(pr[0][1]) * 100, 2)}%', '\n')
-
-        #    https://scikit-learn.org/stable/auto_examples/decomposition/plot_faces_decomposition.html#sphx-glr-auto-examples-decomposition-plot-faces-decomposition-py
+    model = models[-1](count, shape, cnn_h.rows, cnn_h.cols, cnn_h.gray)
+    cnn_h.load_cnn(train, test, cnn_h.y_train, cnn_h.y_test, model, optimum, nb_epoch=epoch,
+                   reset_weights_bool=False,
+                   batch_size=None, model_name='final_model_4', plotting=True, generator=True,
+                   steps_per_epoch=None, logging=2)
